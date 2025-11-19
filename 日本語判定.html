@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>画像の文字：日本語 / 韓国語 判定ツール</title>
+  <style>
+    body {
+      font-family: system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,Arial;
+      margin: 18px;
+      background: #f7f9fc;
+      color: #111;
+    }
+    .container {
+      max-width: 820px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 18px;
+      border-radius: 10px;
+      box-shadow: 0 6px 22px rgba(15,30,50,0.06);
+    }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .box { flex: 1; min-width: 260px; }
+    canvas { max-width: 100%; border: 1px solid #e6eef8; border-radius: 6px; }
+    pre {
+      white-space: pre-wrap;
+      background: #f4f7fb;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #eef3fb;
+      max-height: 220px;
+      overflow: auto;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 12px 0;
+    }
+    .controls button {
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 0;
+      background: #2563eb;
+      color: #fff;
+      cursor: pointer;
+      min-width: 80px;       /* 最小幅を指定 */
+      flex: 0 0 auto;        /* 折り返されても幅固定 */
+    }
+    .muted { color: #6b7280; font-size: 13px; }
+    .result {
+      padding: 10px;
+      border-radius: 8px;
+      margin-top: 10px;
+    }
+    .result.ok { background: #ecfeff; border: 1px solid #bff0ea; }
+    .result.warn { background: #fff7ed; border: 1px solid #ffd7a3; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>画像アップロードで文字が日本語か韓国語か判別</h1>
+    <p class="muted">
+      画像を選ぶとブラウザ内でOCRを実行し、抽出テキストの文字種を調べて<br>
+      日本語（ひらがな/カタカナ/漢字）か韓国語（ハングル）かを判定します。
+    </p>
+
+    <div class="controls">
+      <input id="fileInput" type="file" accept="image/*">
+      <button id="runBtn" disabled>認証</button>
+      <button id="camBtn">カメラ起動</button>
+      <div id="status" class="muted">ファイル未選択</div>
+    </div>
+
+    <div class="row">
+      <div class="box">
+        <canvas id="preview" width="600" height="400"></canvas>
+        <div style="margin-top:8px" class="muted">プレビュー</div>
+      </div>
+      <div class="box">
+        <div id="progress" class="muted">進捗: —</div>
+        <div id="resultBox" class="result" style="display:none"></div>
+        <h3 style="margin-top:12px">抽出テキスト</h3>
+        <pre id="extracted">—</pre>
+      </div>
+    </div>
+
+    <p class="muted" style="margin-top:14px">
+      ※完全自動判定では誤判定することがあります。画像内の文字が薄い・手書き・低解像度だと抽出精度が落ちます。
+    </p>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2.1.5/dist/tesseract.min.js"></script>
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const preview = document.getElementById('preview');
+    const ctx = preview.getContext('2d');
+    const runBtn = document.getElementById('runBtn');
+    const camBtn = document.getElementById('camBtn');
+    const status = document.getElementById('status');
+    const progress = document.getElementById('progress');
+    const extracted = document.getElementById('extracted');
+    const resultBox = document.getElementById('resultBox');
+
+    let currentImage = null;
+
+    fileInput.addEventListener('change', e=>{
+      const f = e.target.files && e.target.files[0];
+      if(!f){ status.textContent = 'ファイル未選択'; runBtn.disabled = true; return; }
+      if(!f.type.startsWith('image/')){ status.textContent = '画像ファイルを選んでください'; runBtn.disabled = true; return; }
+      const url = URL.createObjectURL(f);
+      const img = new Image();
+      img.onload = ()=>{
+        const maxW = 600, maxH = 400;
+        let w = img.width, h = img.height;
+        const ratio = Math.min(maxW/w, maxH/h, 1);
+        preview.width = Math.round(w*ratio);
+        preview.height = Math.round(h*ratio);
+        ctx.clearRect(0,0,preview.width,preview.height);
+        ctx.drawImage(img, 0, 0, preview.width, preview.height);
+        URL.revokeObjectURL(url);
+        currentImage = img;
+        status.textContent = `読み込み完了: ${f.name}`;
+        runBtn.disabled = false;
+        extracted.textContent = '—';
+        resultBox.style.display = 'none';
+        progress.textContent = '進捗: 準備完了';
+      };
+      img.onerror = ()=>{ status.textContent = '画像を読み込めませんでした'; runBtn.disabled = true; }
+      img.src = url;
+    });
+
+    function detectLanguageFromText(text){
+      if(!text) return {lang:'判定不能',score:0,counts:{jpn:0,kor:0,other:0}};
+      const jpnRe = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g;
+      const korRe = /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/g;
+      const jpnMatches = text.match(jpnRe) || [];
+      const korMatches = text.match(korRe) || [];
+      const otherMatches = text.replace(/[\s\n]/g,'').length - (jpnMatches.length + korMatches.length);
+      const j = jpnMatches.length;
+      const k = korMatches.length;
+      let lang = '判定不能';
+      if(j===0 && k===0){ lang = '日本語でも韓国語でもない/テキスト抽出失敗'; }
+      else if(j >= k*2 && j>0){ lang = '日本語 (主に日本語文字)'; }
+      else if(k >= j*2 && k>0){ lang = '韓国語 (主にハングル)'; }
+      else if(j>0 && k>0){ lang = '混在（日本語 + 韓国語）'; }
+      else if(j>0) lang = '日本語が含まれる可能性あり';
+      else if(k>0) lang = '韓国語が含まれる可能性あり';
+      const total = j + k + Math.max(1, otherMatches);
+      const score = Math.round(((j - k)/total)*100);
+      return {lang,score,counts:{jpn:j,kor:k,other:otherMatches}};
+    }
+
+    runBtn.addEventListener('click', async ()=>{
+      if(!currentImage){ alert('先に画像を選んでください'); return; }
+      runBtn.disabled = true;
+      progress.textContent = '進捗: OCR を実行中...';
+      status.textContent = 'OCR 実行中';
+      const imgData = preview.toDataURL('image/png');
+      try{
+        const worker = Tesseract.createWorker({
+          logger: m => {
+            if(m.status && m.status !== 'initialized'){
+              const p = m.progress ? Math.round(m.progress*100) : null;
+              progress.textContent = `進捗: ${m.status}` + (p!==null ? ` (${p}%)` : '');
+            }
+          }
+        });
+        await worker.load();
+        await worker.loadLanguage('jpn+kor');
+        await worker.initialize('jpn+kor');
+        const { data: { text } } = await worker.recognize(imgData);
+        await worker.terminate();
+        extracted.textContent = text.trim() || '（抽出テキストなし）';
+        const res = detectLanguageFromText(text);
+        resultBox.style.display = 'block';
+        resultBox.className = 'result ' + (res.lang.includes('日本語') ? 'ok' : (res.lang.includes('韓国語') ? 'warn' : ''));
+        resultBox.innerHTML = `判定: <strong>${res.lang}</strong><br>スコア: ${res.score}%<br>カウント — 日本語文字: ${res.counts.jpn} 、ハングル: ${res.counts.kor} 、その他: ${res.counts.other}`;
+        progress.textContent = '進捗: 完了';
+        status.textContent = '完了';
+      }catch(err){
+        console.error(err);
+        progress.textContent = '進捗: エラー';
+        status.textContent = 'OCRでエラーが発生しました。コンソールを確認してください。';
+      }
+      runBtn.disabled = false;
+    });
+
+    // --- カメラ撮影でリアルタイムOCR判定 ---
+    const video = document.createElement('video');
+    video.setAttribute('playsinline', '');
+    video.style.display = 'none';
+    document.body.appendChild(video);
+
+    async function startCamera(){
+      try{
+        const stream = await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+        video.srcObject = stream;
+        await video.play();
+        scanLoop();
+      }catch(e){ console.error(e); alert('カメラにアクセスできません'); }
+    }
+
+    async function scanLoop(){
+      if(video.readyState === video.HAVE_ENOUGH_DATA){
+        preview.width = video.videoWidth;
+        preview.height = video.videoHeight;
+        ctx.drawImage(video,0,0,preview.width,preview.height);
+        const imgData = preview.toDataURL('image/png');
+        const worker = Tesseract.createWorker();
+        await worker.load();
+        await worker.loadLanguage('jpn+kor');
+        await worker.initialize('jpn+kor');
+        const { data:{ text } } = await worker.recognize(imgData);
+        await worker.terminate();
+        extracted.textContent = text.trim();
+        const res = detectLanguageFromText(text);
+        resultBox.style.display = 'block';
+        resultBox.innerHTML = `判定: <strong>${res.lang}</strong>`;
+      }
+      requestAnimationFrame(scanLoop);
+    }
+
+    // スマホでもボタン表示済みなのでイベントだけ設定
+    camBtn.onclick = startCamera;
+  </script>
+</body>
+</html>

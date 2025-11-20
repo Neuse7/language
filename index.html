@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>画像の文字：日本語 / 韓国語 判定ツール</title>
+  <title>文字判定ツール</title>
   <style>
     body {
       font-family: system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,Arial;
@@ -46,8 +46,9 @@
       background: #2563eb;
       color: #fff;
       cursor: pointer;
-      min-width: 80px;       /* 最小幅を指定 */
-      flex: 0 0 auto;        /* 折り返されても幅固定 */
+      min-width: 80px;
+      flex: 0 0 auto;
+      margin-top: 4px;
     }
     .muted { color: #6b7280; font-size: 13px; }
     .result {
@@ -61,10 +62,10 @@
 </head>
 <body>
   <div class="container">
-    <h1>画像アップロードで文字が日本語か韓国語か判別</h1>
+    <h1>日本語文字判定ツール</h1>
     <p class="muted">
-      画像を選ぶとブラウザ内でOCRを実行し、抽出テキストの文字種を調べて<br>
-      日本語（ひらがな/カタカナ/漢字）か韓国語（ハングル）かを判定します。
+      画像を選ぶとブラウザ内でOCRを実行し、文字が**日本語のみかどうか**を判定します。<br>
+      日本語以外（韓国語や特殊文字）が含まれる場合はNG判定になります。
     </p>
 
     <div class="controls">
@@ -88,7 +89,7 @@
     </div>
 
     <p class="muted" style="margin-top:14px">
-      ※完全自動判定では誤判定することがあります。画像内の文字が薄い・手書き・低解像度だと抽出精度が落ちます。
+      ※完全自動判定では誤判定することがあります。文字が薄い・手書き・低解像度だと精度が落ちます。
     </p>
   </div>
 
@@ -132,25 +133,14 @@
       img.src = url;
     });
 
-    function detectLanguageFromText(text){
-      if(!text) return {lang:'判定不能',score:0,counts:{jpn:0,kor:0,other:0}};
-      const jpnRe = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g;
-      const korRe = /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/g;
-      const jpnMatches = text.match(jpnRe) || [];
-      const korMatches = text.match(korRe) || [];
-      const otherMatches = text.replace(/[\s\n]/g,'').length - (jpnMatches.length + korMatches.length);
-      const j = jpnMatches.length;
-      const k = korMatches.length;
-      let lang = '判定不能';
-      if(j===0 && k===0){ lang = '日本語でも韓国語でもない/テキスト抽出失敗'; }
-      else if(j >= k*2 && j>0){ lang = '日本語 (主に日本語文字)'; }
-      else if(k >= j*2 && k>0){ lang = '韓国語 (主にハングル)'; }
-      else if(j>0 && k>0){ lang = '混在（日本語 + 韓国語）'; }
-      else if(j>0) lang = '日本語が含まれる可能性あり';
-      else if(k>0) lang = '韓国語が含まれる可能性あり';
-      const total = j + k + Math.max(1, otherMatches);
-      const score = Math.round(((j - k)/total)*100);
-      return {lang,score,counts:{jpn:j,kor:k,other:otherMatches}};
+    function detectJapaneseOnly(text){
+      if(!text) return {ok:false, counts:{jpn:0,other:0}};
+      const jpnRe = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g; // 日本語
+      const cleanedText = text.replace(/\s/g,''); // 空白除去
+      const jpnMatches = cleanedText.match(jpnRe) || [];
+      const otherCount = cleanedText.length - jpnMatches.length;
+      const ok = otherCount === 0; // 日本語以外があればNG
+      return {ok, counts:{jpn:jpnMatches.length, other:otherCount}};
     }
 
     runBtn.addEventListener('click', async ()=>{
@@ -169,15 +159,17 @@
           }
         });
         await worker.load();
-        await worker.loadLanguage('jpn+kor');
-        await worker.initialize('jpn+kor');
+        await worker.loadLanguage('jpn'); // 日本語のみ
+        await worker.initialize('jpn');
         const { data: { text } } = await worker.recognize(imgData);
         await worker.terminate();
+
         extracted.textContent = text.trim() || '（抽出テキストなし）';
-        const res = detectLanguageFromText(text);
+        const res = detectJapaneseOnly(text);
+
         resultBox.style.display = 'block';
-        resultBox.className = 'result ' + (res.lang.includes('日本語') ? 'ok' : (res.lang.includes('韓国語') ? 'warn' : ''));
-        resultBox.innerHTML = `判定: <strong>${res.lang}</strong><br>スコア: ${res.score}%<br>カウント — 日本語文字: ${res.counts.jpn} 、ハングル: ${res.counts.kor} 、その他: ${res.counts.other}`;
+        resultBox.className = 'result ' + (res.ok ? 'ok' : 'warn');
+        resultBox.innerHTML = `判定: <strong>${res.ok ? 'OK（日本語のみ）' : 'NG（日本語以外含む）'}</strong><br>カウント — 日本語文字: ${res.counts.jpn} 、その他: ${res.counts.other}`;
         progress.textContent = '進捗: 完了';
         status.textContent = '完了';
       }catch(err){
@@ -188,7 +180,7 @@
       runBtn.disabled = false;
     });
 
-    // --- カメラ撮影でリアルタイムOCR判定 ---
+    // カメラOCR（日本語のみ）
     const video = document.createElement('video');
     video.setAttribute('playsinline', '');
     video.style.display = 'none';
@@ -211,19 +203,19 @@
         const imgData = preview.toDataURL('image/png');
         const worker = Tesseract.createWorker();
         await worker.load();
-        await worker.loadLanguage('jpn+kor');
-        await worker.initialize('jpn+kor');
+        await worker.loadLanguage('jpn'); // 日本語のみ
+        await worker.initialize('jpn');
         const { data:{ text } } = await worker.recognize(imgData);
         await worker.terminate();
         extracted.textContent = text.trim();
-        const res = detectLanguageFromText(text);
+        const res = detectJapaneseOnly(text);
         resultBox.style.display = 'block';
-        resultBox.innerHTML = `判定: <strong>${res.lang}</strong>`;
+        resultBox.className = 'result ' + (res.ok ? 'ok' : 'warn');
+        resultBox.innerHTML = `判定: <strong>${res.ok ? 'OK（日本語のみ）' : 'NG（日本語以外含む）'}</strong>`;
       }
       requestAnimationFrame(scanLoop);
     }
 
-    // スマホでもボタン表示済みなのでイベントだけ設定
     camBtn.onclick = startCamera;
   </script>
 </body>

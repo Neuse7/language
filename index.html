@@ -90,7 +90,7 @@ fileInput.addEventListener('change', e=>{
   img.src=url;
 });
 
-// --- 前処理：グレースケール＋二値化 ---
+// --- 前処理: グレースケール + 二値化 ---
 function preprocessCanvas(canvas){
   const w=canvas.width,h=canvas.height;
   const imgData=ctx.getImageData(0,0,w,h);
@@ -117,8 +117,9 @@ async function recognize(imgData, lang){
 
 // --- 判定 ---
 function checkKor(text){
-  const cleaned=text.replace(/\s/g,'');
-  return cleaned.length===0; // 文字なしならOK
+  const hangulSyllableRe = /[\uAC00-\uD7AF]/g; // ハングル音節のみ
+  const korMatches = text.match(hangulSyllableRe) || [];
+  return korMatches.length === 0; // 0文字ならOK
 }
 
 // --- メインOCR ---
@@ -135,14 +136,13 @@ async function performOCR(){
     const jpnEngText=await recognize(imgData,'jpn+eng');
     extracted.textContent=jpnEngText.trim()||'（抽出テキストなし）';
 
-    // 韓国語OCR（判定用）
+    // 韓国語OCR（ハングル音節のみ判定）
     const korText=await recognize(imgData,'kor');
-    const hasKor=korText.replace(/\s/g,'').length>0;
-    const ok=!hasKor && jpnEngText.replace(/\s/g,'').length>0;
+    const ok=checkKor(korText) && jpnEngText.replace(/\s/g,'').length>0;
 
     resultBox.style.display='block';
     resultBox.className='result '+(ok?'ok':'warn');
-    resultBox.innerHTML=`判定: <strong>${ok?'OK':'NG'}</strong>${ok?'':'（韓国語が含まれるか文字なし）'}`;
+    resultBox.innerHTML=`判定: <strong>${ok?'OK':'NG'}</strong>${ok?'':'（ハングル音節が含まれるか文字なし）'}`;
 
     progress.textContent='進捗: 完了';
     status.textContent='完了';
@@ -181,11 +181,11 @@ async function scanLoop(){
     const jpnEngText=await recognize(imgData,'jpn+eng');
     const korText=await recognize(imgData,'kor');
     extracted.textContent=jpnEngText.trim()||'（抽出テキストなし）';
-    const hasKor=korText.replace(/\s/g,'').length>0;
-    const ok=!hasKor && jpnEngText.replace(/\s/g,'').length>0;
+    const ok=checkKor(korText) && jpnEngText.replace(/\s/g,'').length>0;
+
     resultBox.style.display='block';
     resultBox.className='result '+(ok?'ok':'warn');
-    resultBox.innerHTML=`判定: <strong>${ok?'OK':'NG'}</strong>${ok?'':'（韓国語が含まれるか文字なし）'}`;
+    resultBox.innerHTML=`判定: <strong>${ok?'OK':'NG'}</strong>${ok?'':'（韓国語なし）'}`;
   }
   requestAnimationFrame(scanLoop);
 }

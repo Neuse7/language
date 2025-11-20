@@ -62,10 +62,11 @@
 </head>
 <body>
   <div class="container">
-    <h1>日本語文字判定ツール</h1>
+    <h1>文字判定ツール</h1>
     <p class="muted">
-      画像を選ぶとブラウザ内でOCRを実行し、文字が**日本語のみかどうか**を判定します。<br>
-      日本語以外（韓国語や特殊文字）が含まれる場合はNG判定になります。
+      画像を選ぶとブラウザ内でOCRを実行し、<br>
+      「韓国語が含まれる場合はNG」<br>
+      それ以外はOKと判定します。
     </p>
 
     <div class="controls">
@@ -87,10 +88,6 @@
         <pre id="extracted">—</pre>
       </div>
     </div>
-
-    <p class="muted" style="margin-top:14px">
-      ※完全自動判定では誤判定することがあります。文字が薄い・手書き・低解像度だと精度が落ちます。
-    </p>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2.1.5/dist/tesseract.min.js"></script>
@@ -133,17 +130,16 @@
       img.src = url;
     });
 
-    function detectJapaneseOnly(text){
-      if(!text) return {ok:false, counts:{jpn:0,other:0}};
-      const jpnRe = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g; // 日本語
-      const cleanedText = text.replace(/\s/g,''); // 空白除去
-      const jpnMatches = cleanedText.match(jpnRe) || [];
-      const otherCount = cleanedText.length - jpnMatches.length;
-      const ok = otherCount === 0; // 日本語以外があればNG
-      return {ok, counts:{jpn:jpnMatches.length, other:otherCount}};
+    function detectOkOrNg(text){
+      const cleaned = text.replace(/\s/g,'');
+      if(!cleaned) return {ok:false, reason:'文字なし'};
+      const korRe = /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/g;
+      const hasKor = korRe.test(cleaned);
+      if(hasKor) return {ok:false, reason:'韓国語が含まれる'};
+      return {ok:true, reason:'OK'};
     }
 
-    runBtn.addEventListener('click', async ()=>{
+    async function performOCR(){
       if(!currentImage){ alert('先に画像を選んでください'); return; }
       runBtn.disabled = true;
       progress.textContent = '進捗: OCR を実行中...';
@@ -159,17 +155,17 @@
           }
         });
         await worker.load();
-        await worker.loadLanguage('jpn'); // 日本語のみ
-        await worker.initialize('jpn');
+        await worker.loadLanguage('jpn+eng');
+        await worker.initialize('jpn+eng');
         const { data: { text } } = await worker.recognize(imgData);
         await worker.terminate();
 
         extracted.textContent = text.trim() || '（抽出テキストなし）';
-        const res = detectJapaneseOnly(text);
+        const res = detectOkOrNg(text);
 
         resultBox.style.display = 'block';
         resultBox.className = 'result ' + (res.ok ? 'ok' : 'warn');
-        resultBox.innerHTML = `判定: <strong>${res.ok ? 'OK（日本語のみ）' : 'NG（日本語以外含む）'}</strong><br>カウント — 日本語文字: ${res.counts.jpn} 、その他: ${res.counts.other}`;
+        resultBox.innerHTML = `判定: <strong>${res.ok ? 'OK' : 'NG'}</strong> (${res.reason})`;
         progress.textContent = '進捗: 完了';
         status.textContent = '完了';
       }catch(err){
@@ -178,12 +174,14 @@
         status.textContent = 'OCRでエラーが発生しました。コンソールを確認してください。';
       }
       runBtn.disabled = false;
-    });
+    }
 
-    // カメラOCR（日本語のみ）
+    runBtn.addEventListener('click', performOCR);
+
+    // カメラOCR
     const video = document.createElement('video');
-    video.setAttribute('playsinline', '');
-    video.style.display = 'none';
+    video.setAttribute('playsinline','');
+    video.style.display='none';
     document.body.appendChild(video);
 
     async function startCamera(){
@@ -203,15 +201,15 @@
         const imgData = preview.toDataURL('image/png');
         const worker = Tesseract.createWorker();
         await worker.load();
-        await worker.loadLanguage('jpn'); // 日本語のみ
-        await worker.initialize('jpn');
+        await worker.loadLanguage('jpn+eng');
+        await worker.initialize('jpn+eng');
         const { data:{ text } } = await worker.recognize(imgData);
         await worker.terminate();
-        extracted.textContent = text.trim();
-        const res = detectJapaneseOnly(text);
+        extracted.textContent = text.trim() || '（抽出テキストなし）';
+        const res = detectOkOrNg(text);
         resultBox.style.display = 'block';
-        resultBox.className = 'result ' + (res.ok ? 'ok' : 'warn');
-        resultBox.innerHTML = `判定: <strong>${res.ok ? 'OK（日本語のみ）' : 'NG（日本語以外含む）'}</strong>`;
+        resultBox.className = 'result ' + (res.ok ? 'ok':'warn');
+        resultBox.innerHTML = `判定: <strong>${res.ok ? 'OK':'NG'}</strong> (${res.reason})`;
       }
       requestAnimationFrame(scanLoop);
     }
